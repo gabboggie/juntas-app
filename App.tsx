@@ -1,18 +1,19 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, Experience, ViewType, ExperienceType } from './types';
-import { Navigation } from './components/Navigation';
-import { ExperienceCard } from './components/ExperienceCard';
-import { MapView } from './components/MapView';
-import { CalendarView } from './components/CalendarView';
-import { Stamp } from './components/Stamp';
-import { TYPE_CONFIG } from './constants';
-import { getGeocodingFromGemini, suggestEmotionalNote } from './services/geminiService';
-import { subscribeToMemories, saveMemoryToCloud, deleteMemoryFromCloud } from './services/firebaseService';
+import { User, Experience, ViewType, ExperienceType } from './types.ts';
+import { Navigation } from './components/Navigation.tsx';
+import { ExperienceCard } from './components/ExperienceCard.tsx';
+import { MapView } from './components/MapView.tsx';
+import { CalendarView } from './components/CalendarView.tsx';
+import { Stamp } from './components/Stamp.tsx';
+import { TYPE_CONFIG } from './constants.tsx';
+import { getGeocodingFromGemini, suggestEmotionalNote } from './services/geminiService.ts';
+import { subscribeToMemories, saveMemoryToCloud, deleteMemoryFromCloud } from './services/firebaseService.ts';
 
 declare const confetti: any;
 
 const LOGO_URL = 'https://gabboggie.com/wp-content/uploads/2026/01/psprt_beige.png';
+const APP_VERSION = "2.3.1 - Fix GitHub Pages";
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -42,7 +43,6 @@ const App: React.FC = () => {
     if (savedUser) setUser(JSON.parse(savedUser));
   }, []);
 
-  // Sincronización con Firebase
   useEffect(() => {
     if (user) {
       const unsubscribe = subscribeToMemories((cloudMemories) => {
@@ -75,9 +75,12 @@ const App: React.FC = () => {
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm("¿Seguro que quieres borrar este sello para siempre?")) {
+    if (confirm("¿Seguro que quieres borrar este sello para siempre? Esta acción no se puede deshacer.")) {
       await deleteMemoryFromCloud(id);
       setSelectedExp(null);
+      if (typeof confetti !== 'undefined') {
+        confetti({ particleCount: 50, spread: 40, origin: { y: 0.8 }, colors: ['#EF4444'] });
+      }
     }
   };
 
@@ -232,7 +235,7 @@ const App: React.FC = () => {
             {isCloudSynced && (
               <div className="flex items-center gap-1.5 mt-[-2px]">
                 <div className="w-1.5 h-1.5 bg-green-500 rounded-full sync-pulse" />
-                <span className="text-[9px] font-black uppercase text-green-600 tracking-widest">Leo está conectada</span>
+                <span className="text-[9px] font-black uppercase text-green-600 tracking-widest">En línea con Leo</span>
               </div>
             )}
           </div>
@@ -363,7 +366,10 @@ const App: React.FC = () => {
                 </button>
               </div>
               
-              <p className="text-[9px] font-black text-gray-400 text-center uppercase tracking-widest leading-tight">Juntas v2.2 - Nube Activada</p>
+              <div className="text-center space-y-1">
+                <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest leading-tight">Juntas App</p>
+                <p className="text-[8px] font-black text-orange-400 uppercase tracking-widest">v{APP_VERSION}</p>
+              </div>
             </div>
           </div>
         )}
@@ -374,7 +380,10 @@ const App: React.FC = () => {
           <div className="absolute inset-0 bg-black/90 backdrop-blur-sm" onClick={() => setSelectedExp(null)} />
           <div className="bg-white w-full max-w-xl rounded-t-[4rem] sm:rounded-[4rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom duration-300 border-8 border-black overflow-y-auto max-h-[90vh] no-scrollbar">
             <div className="absolute top-6 right-6 flex gap-2">
-              <button onClick={() => handleDelete(selectedExp.id)} className="p-3 rounded-full border-4 border-red-600 bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] z-10 hover:bg-red-50 active:scale-95 transition-all text-red-600">
+              <button 
+                onClick={(e) => { e.stopPropagation(); handleDelete(selectedExp.id); }} 
+                className="p-3 rounded-full border-4 border-red-600 bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] z-10 hover:bg-red-50 active:scale-95 transition-all text-red-600"
+              >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" className="w-5 h-5"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
               </button>
               <button onClick={() => setSelectedExp(null)} className="p-3 rounded-full border-4 border-black bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] z-10 hover:bg-orange-50 active:scale-95 transition-all">

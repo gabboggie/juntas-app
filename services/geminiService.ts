@@ -1,10 +1,20 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 
-// Inicialización estándar siguiendo las mejores prácticas de seguridad
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Evitar que la app rompa si process.env no está definido (común en GitHub Pages sin build)
+const getApiKey = () => {
+  try {
+    return process.env.API_KEY || "";
+  } catch (e) {
+    return "";
+  }
+};
+
+const apiKey = getApiKey();
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 export const getGeocodingFromGemini = async (locationName: string): Promise<{ lat: number; lng: number } | null> => {
+  if (!ai) return null;
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -32,6 +42,7 @@ export const getGeocodingFromGemini = async (locationName: string): Promise<{ la
 };
 
 export const suggestEmotionalNote = async (title: string, type: string, location: string): Promise<string> => {
+  if (!ai) return "Un momento inolvidable juntas.";
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
