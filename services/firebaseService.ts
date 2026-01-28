@@ -4,13 +4,14 @@ import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, deleteDoc
 import { Experience } from '../types';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCG5yMvm_rKwYrmFW_5QZOn8G4", 
+  apiKey: "AIzaSyCG5yMvm_rKwYrmFW_5QZOlp8Qg9RcozfM",
   authDomain: "juntas-bitacora.firebaseapp.com",
   projectId: "juntas-bitacora",
   storageBucket: "juntas-bitacora.firebasestorage.app",
   messagingSenderId: "1054570412142",
-  appId: "1:1054570412142:web:3312e3c4e0f4974f7620a2"
+  appId: "1:1054570412142:web:3312e3c448b4f40eb0ce7f"
 };
+
 
 let db: any = null;
 

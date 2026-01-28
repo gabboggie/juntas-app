@@ -2,28 +2,11 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
 /**
- * Acceso seguro a la API KEY. 
- * En producción (GitHub Pages), process no está definido por defecto.
+ * Acceso directo a la API KEY según las guías oficiales.
  */
-const getApiKey = (): string => {
-  try {
-    // @ts-ignore
-    const envKey = typeof process !== 'undefined' && process.env ? process.env.API_KEY : '';
-    return envKey || "";
-  } catch (e) {
-    return "";
-  }
-};
-
-const apiKey = getApiKey();
-// Solo inicializamos si tenemos una llave válida para evitar errores de constructor
-const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const getGeocodingFromGemini = async (locationName: string): Promise<{ lat: number; lng: number } | null> => {
-  if (!ai) {
-    console.warn("AI no inicializada: Falta API Key");
-    return null;
-  }
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -41,7 +24,8 @@ export const getGeocodingFromGemini = async (locationName: string): Promise<{ la
       },
     });
 
-    const data = JSON.parse(response.text || '{}');
+    // response.text is a property, and should be trimmed before parsing
+    const data = JSON.parse(response.text?.trim() || '{}');
     if (data.lat && data.lng) return data;
     return null;
   } catch (error) {
@@ -51,12 +35,12 @@ export const getGeocodingFromGemini = async (locationName: string): Promise<{ la
 };
 
 export const suggestEmotionalNote = async (title: string, type: string, location: string): Promise<string> => {
-  if (!ai) return "Un momento inolvidable juntas.";
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: `Escribe una frase muy corta, romántica y emocional para una memoria compartida entre dos mujeres sobre una actividad de ${type} llamada "${title}" en ${location}. Usa un tono íntimo y femenino. Máximo 15 palabras.`,
     });
+    // response.text is a property
     return response.text?.trim() || "Un momento inolvidable juntas.";
   } catch (error) {
     console.error("Error sugiriendo nota:", error);
