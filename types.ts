@@ -33,4 +33,4 @@ export interface User {
   partnerId: string;
 }
 
-export type ViewType = 'passport' | 'map' | 'calendar' | 'categories' | 'add';
+export type ViewType = 'passport' | 'map' | 'calendar' | 'categories' | 'add' | 'settings';

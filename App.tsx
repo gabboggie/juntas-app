@@ -8,8 +8,10 @@ import { CalendarView } from './components/CalendarView';
 import { Stamp } from './components/Stamp';
 import { TYPE_CONFIG } from './constants';
 import { getGeocodingFromGemini, suggestEmotionalNote } from './services/geminiService';
+import { subscribeToMemories, saveMemoryToCloud, deleteMemoryFromCloud } from './services/firebaseService';
 
-// Logo oficial beige sugerido por el usuario
+declare const confetti: any;
+
 const LOGO_URL = 'https://gabboggie.com/wp-content/uploads/2026/01/psprt_beige.png';
 
 const App: React.FC = () => {
@@ -19,6 +21,7 @@ const App: React.FC = () => {
   const [selectedExp, setSelectedExp] = useState<Experience | null>(null);
   const [filterType, setFilterType] = useState<ExperienceType | 'Todas'>('Todas');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isCloudSynced, setIsCloudSynced] = useState(false);
   
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -36,39 +39,24 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const savedUser = localStorage.getItem('juntas_user');
-    const savedExps = localStorage.getItem('juntas_experiences');
     if (savedUser) setUser(JSON.parse(savedUser));
-    if (savedExps) {
-      try {
-        setExperiences(JSON.parse(savedExps));
-      } catch (e) {
-        console.error("Error cargando memorias:", e);
-      }
-    }
   }, []);
 
+  // Sincronización con Firebase
   useEffect(() => {
-    if (experiences.length > 0) {
-      try {
-        localStorage.setItem('juntas_experiences', JSON.stringify(experiences));
-      } catch (e) {
-        if (e instanceof DOMException && e.name === 'QuotaExceededError') {
-          alert("¡Bitácora llena! Intenta con fotos más pequeñas.");
-        }
-      }
+    if (user) {
+      const unsubscribe = subscribeToMemories((cloudMemories) => {
+        setIsCloudSynced(true);
+        setExperiences(cloudMemories);
+      });
+      return () => unsubscribe();
     }
-  }, [experiences]);
+  }, [user]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    // Validación de credenciales específicas
     if (username === 'Leo' && password === 'Bielorusia_83') {
-      const mockUser: User = {
-        id: 'u1',
-        email: 'leo@juntas.app',
-        name: 'Leo',
-        partnerId: 'u2',
-      };
+      const mockUser: User = { id: 'u1', email: 'leo@juntas.app', name: 'Leo', partnerId: 'u2' };
       setUser(mockUser);
       setLoginError(false);
       localStorage.setItem('juntas_user', JSON.stringify(mockUser));
@@ -78,24 +66,36 @@ const App: React.FC = () => {
     }
   };
 
+  const handleLogout = () => {
+    if (confirm("¿Cerrar bitácora? Tus datos se mantendrán en la nube.")) {
+      setUser(null);
+      localStorage.removeItem('juntas_user');
+      setIsSidebarOpen(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (confirm("¿Seguro que quieres borrar este sello para siempre?")) {
+      await deleteMemoryFromCloud(id);
+      setSelectedExp(null);
+    }
+  };
+
   const compressImage = (base64Str: string): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
       img.src = base64Str;
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 800;
+        const MAX_WIDTH = 600;
         let width = img.width;
         let height = img.height;
-        if (width > MAX_WIDTH) {
-          height *= MAX_WIDTH / width;
-          width = MAX_WIDTH;
-        }
+        if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx?.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.6));
+        resolve(canvas.toDataURL('image/jpeg', 0.5));
       };
     });
   };
@@ -120,24 +120,28 @@ const App: React.FC = () => {
       const result = await getGeocodingFromGemini(newExp.locationName);
       if (result) coords = result;
     }
-    const exp: Experience = {
-      id: Math.random().toString(36).substr(2, 9),
+    
+    const expData = {
       ...newExp,
       coordinates: coords,
-      createdBy: user?.id || 'anon',
+      createdBy: user?.name || 'Leo',
       createdAt: Date.now(),
     };
-    setExperiences(prev => [exp, ...prev]);
+
+    const cloudId = await saveMemoryToCloud(expData);
+    
+    if (cloudId && typeof confetti !== 'undefined') {
+      confetti({
+        particleCount: 150,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: ['#FB923C', '#8B4513', '#FFFDF7', '#000000']
+      });
+    }
+
     setIsGenerating(false);
     setView('passport');
-    setNewExp({
-      title: '',
-      type: ExperienceType.COCINA,
-      date: new Date().toISOString().split('T')[0],
-      locationName: '',
-      note: '',
-      photoUrl: '',
-    });
+    setNewExp({ title: '', type: ExperienceType.COCINA, date: new Date().toISOString().split('T')[0], locationName: '', note: '', photoUrl: '' });
   };
 
   const generateAIPrompt = async () => {
@@ -148,14 +152,9 @@ const App: React.FC = () => {
     setIsGenerating(false);
   };
 
-  const changeView = (newView: ViewType) => {
-    setView(newView);
-    setIsSidebarOpen(false);
-  };
+  const changeView = (newView: ViewType) => { setView(newView); setIsSidebarOpen(false); };
 
-  const filteredExperiences = experiences.filter(exp => 
-    filterType === 'Todas' || exp.type === filterType
-  ).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const filteredExperiences = experiences.filter(exp => filterType === 'Todas' || exp.type === filterType).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   if (!user) {
     return (
@@ -171,33 +170,15 @@ const App: React.FC = () => {
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-1 text-left">
               <label className="text-[10px] font-black uppercase text-gray-400 ml-4 tracking-widest">Usuario</label>
-              <input 
-                type="text" 
-                placeholder="Nombre de usuario" 
-                className={`w-full px-6 py-4 rounded-2xl bg-white border-4 border-black text-black shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] outline-none font-black focus:translate-y-[-2px] focus:shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] transition-all ${loginError ? 'border-red-500' : 'border-black'}`} 
-                value={username} 
-                onChange={(e) => setUsername(e.target.value)} 
-                required 
-              />
+              <input type="text" placeholder="Nombre de usuario" className={`w-full px-6 py-4 rounded-2xl bg-white border-4 border-black text-black shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] outline-none font-black focus:translate-y-[-2px] transition-all ${loginError ? 'border-red-500' : 'border-black'}`} value={username} onChange={(e) => setUsername(e.target.value)} required />
             </div>
             <div className="space-y-1 text-left">
               <label className="text-[10px] font-black uppercase text-gray-400 ml-4 tracking-widest">Clave</label>
-              <input 
-                type="password" 
-                placeholder="Contraseña secreta" 
-                className={`w-full px-6 py-4 rounded-2xl bg-white border-4 border-black text-black shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] outline-none font-black focus:translate-y-[-2px] focus:shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] transition-all ${loginError ? 'border-red-500' : 'border-black'}`} 
-                value={password} 
-                onChange={(e) => setPassword(e.target.value)} 
-                required 
-              />
+              <input type="password" placeholder="Contraseña secreta" className={`w-full px-6 py-4 rounded-2xl bg-white border-4 border-black text-black shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] outline-none font-black focus:translate-y-[-2px] transition-all ${loginError ? 'border-red-500' : 'border-black'}`} value={password} onChange={(e) => setPassword(e.target.value)} required />
             </div>
             {loginError && <p className="text-red-500 text-[10px] font-black uppercase tracking-widest">Credenciales incorrectas</p>}
-            <button type="submit" className="w-full bg-black text-white font-black py-5 rounded-2xl shadow-[8px_8px_0px_0px_rgba(251,146,60,1)] hover:translate-y-[-2px] active:translate-y-[2px] transition-all uppercase tracking-widest text-lg text-center mt-4">Abrir bitácora</button>
+            <button type="submit" className="w-full bg-black text-white font-black py-5 rounded-2xl shadow-[8px_8px_0px_0px_rgba(251,146,60,1)] hover:translate-y-[-2px] active:translate-y-[2px] transition-all uppercase tracking-widest text-lg mt-4">Abrir bitácora</button>
           </form>
-          <div className="mt-12 flex items-center justify-center gap-2 opacity-20 grayscale">
-             <img src={LOGO_URL} className="w-6 h-6 object-contain" alt="icon" />
-             <p className="text-[10px] font-black uppercase tracking-widest">Acceso Restringido</p>
-          </div>
         </div>
       </div>
     );
@@ -215,33 +196,25 @@ const App: React.FC = () => {
               </div>
               <h2 className="text-3xl font-black text-black font-serif">Menú</h2>
             </div>
-            <nav className="flex flex-col gap-4">
+            <nav className="flex flex-col gap-4 overflow-y-auto no-scrollbar">
               {[
                 { id: 'passport', label: 'Inicio', icon: '📖' },
                 { id: 'add', label: 'Agregar sello', icon: '✨' },
                 { id: 'map', label: 'Mapa', icon: '🗺️' },
                 { id: 'calendar', label: 'Calendario', icon: '📅' },
                 { id: 'categories', label: 'Colección', icon: '🗂️' },
+                { id: 'settings', label: 'Configuración', icon: '⚙️' },
               ].map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => changeView(item.id as ViewType)}
-                  className={`flex items-center gap-4 text-left p-5 rounded-2xl border-4 transition-all ${
-                    view === item.id ? 'bg-black text-white border-black shadow-[6px_6px_0px_0px_rgba(251,146,60,1)]' : 'bg-white text-black border-black hover:bg-orange-50'
-                  }`}
-                >
+                <button key={item.id} onClick={() => changeView(item.id as ViewType)} className={`flex items-center gap-4 text-left p-5 rounded-2xl border-4 transition-all ${view === item.id ? 'bg-black text-white border-black shadow-[6px_6px_0px_0px_rgba(251,146,60,1)]' : 'bg-white text-black border-black hover:bg-orange-50'}`}>
                   <span className="text-2xl">{item.icon}</span>
                   <span className="text-xl font-black uppercase tracking-tight">{item.label}</span>
                 </button>
               ))}
+              <button onClick={handleLogout} className="flex items-center gap-4 text-left p-5 rounded-2xl border-4 bg-red-50 text-red-600 border-red-600 shadow-[6px_6px_0px_0px_rgba(0,0,0,0.1)] mt-4">
+                <span className="text-2xl">👋</span>
+                <span className="text-xl font-black uppercase tracking-tight">Salir</span>
+              </button>
             </nav>
-            <div className="mt-auto pt-10 border-t-4 border-black flex items-center gap-3">
-               <img src={LOGO_URL} alt="Mini Logo" className="w-10 h-10 rounded-lg grayscale opacity-40 border-2 border-black" />
-               <div>
-                  <p className="text-xs font-black uppercase opacity-40">Bitácora Juntas</p>
-                  <p className="text-lg font-serif italic">Por siempre.</p>
-               </div>
-            </div>
           </div>
         </>
       )}
@@ -251,9 +224,17 @@ const App: React.FC = () => {
           <button onClick={() => setIsSidebarOpen(true)} className="p-3 bg-white border-4 border-black rounded-2xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:shadow-none transition-all">
             <svg viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="4" className="w-6 h-6"><line x1="4" y1="7" x2="20" y2="7" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="17" x2="20" y2="17" /></svg>
           </button>
-          <div className="flex items-center gap-2">
-            <img src={LOGO_URL} alt="Juntas Logo" className="w-10 h-10 object-cover rounded-lg border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]" />
-            <h1 className="text-2xl font-black text-black font-serif italic pt-1">Juntas</h1>
+          <div className="flex flex-col">
+            <div className="flex items-center gap-2">
+              <img src={LOGO_URL} alt="Juntas Logo" className="w-8 h-8 object-cover rounded-lg border-2 border-black" />
+              <h1 className="text-xl font-black text-black font-serif italic pt-1">Juntas</h1>
+            </div>
+            {isCloudSynced && (
+              <div className="flex items-center gap-1.5 mt-[-2px]">
+                <div className="w-1.5 h-1.5 bg-green-500 rounded-full sync-pulse" />
+                <span className="text-[9px] font-black uppercase text-green-600 tracking-widest">Leo está conectada</span>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -273,7 +254,7 @@ const App: React.FC = () => {
             ) : (
               <div className="text-center py-20 bg-white border-8 border-dashed border-gray-200 rounded-[3rem] flex flex-col items-center">
                  <img src={LOGO_URL} alt="No memories" className="w-20 h-20 opacity-10 mb-4 grayscale rounded-2xl" />
-                 <p className="font-black text-gray-300 uppercase tracking-widest text-xs">Nuestra bitácora está esperando tu próximo sello</p>
+                 <p className="font-black text-gray-300 uppercase tracking-widest text-xs px-10">Esperando vuestro primer sello compartido...</p>
               </div>
             )}
           </div>
@@ -326,7 +307,6 @@ const App: React.FC = () => {
                   <label className="text-[10px] font-black uppercase text-gray-500 ml-2">Título de la aventura</label>
                   <input className="w-full px-5 py-4 rounded-2xl border-4 border-black text-black font-black focus:bg-orange-50 transition-colors" placeholder="Ej: Pizza en el sofá..." value={newExp.title} onChange={e => setNewExp({...newExp, title: e.target.value})} required />
                 </div>
-                
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] font-black uppercase text-gray-500 ml-2">Tipo de sello</label>
@@ -339,12 +319,10 @@ const App: React.FC = () => {
                     <input type="date" className="w-full px-5 py-4 rounded-2xl border-4 border-black font-black focus:bg-orange-50 transition-colors" value={newExp.date} onChange={e => setNewExp({...newExp, date: e.target.value})} required />
                   </div>
                 </div>
-
                 <div className="space-y-1">
                   <label className="text-[10px] font-black uppercase text-gray-500 ml-2">¿Dónde?</label>
                   <input className="w-full px-5 py-4 rounded-2xl border-4 border-black font-black focus:bg-orange-50 transition-colors" placeholder="Ej: Nuestra casa" value={newExp.locationName} onChange={e => setNewExp({...newExp, locationName: e.target.value})} required />
                 </div>
-
                 <div className="space-y-1">
                   <label className="text-[10px] font-black uppercase text-gray-500 ml-2">Foto nuestra (Opcional)</label>
                   <div className="relative">
@@ -354,7 +332,6 @@ const App: React.FC = () => {
                     </label>
                   </div>
                 </div>
-
                 <div className="space-y-1">
                   <div className="flex justify-between items-center mb-1">
                     <label className="text-[10px] font-black uppercase text-gray-500 ml-2">Nota</label>
@@ -364,9 +341,30 @@ const App: React.FC = () => {
                 </div>
               </div>
               <button type="submit" disabled={isGenerating} className="w-full bg-black text-white font-black py-5 rounded-2xl shadow-[8px_8px_0px_0px_rgba(251,146,60,1)] active:translate-y-[4px] active:shadow-none transition-all uppercase text-xl mt-4">
-                {isGenerating ? 'Guardando...' : 'Fijar sello'}
+                {isGenerating ? 'Fijando...' : 'Fijar sello'}
               </button>
             </form>
+          </div>
+        )}
+
+        {view === 'settings' && (
+          <div className="max-w-md mx-auto animate-in slide-in-from-right-4 duration-500 bg-white p-8 rounded-[3rem] border-8 border-black shadow-[12px_12px_0px_0px_rgba(0,0,0,0.1)]">
+            <h2 className="text-3xl font-black mb-8 text-center font-serif">Configuración</h2>
+            <div className="space-y-8">
+              <div className="text-center p-6 bg-green-50 border-4 border-black rounded-3xl">
+                <p className="text-xs font-black uppercase text-green-800 mb-1">Estado de Sincronización</p>
+                <p className="text-xl font-black text-black uppercase tracking-widest">{isCloudSynced ? '✨ EN LA NUBE' : '📴 LOCAL'}</p>
+                <p className="text-[10px] font-black uppercase text-gray-500 mt-2">Memorias totales: {experiences.length}</p>
+              </div>
+
+              <div className="pt-8 border-t-4 border-black">
+                <button onClick={handleLogout} className="w-full flex items-center justify-center gap-4 px-5 py-4 rounded-2xl border-4 border-red-600 font-black text-red-600 bg-white hover:bg-red-50 transition-all">
+                  <span>Cerrar Sesión</span>
+                </button>
+              </div>
+              
+              <p className="text-[9px] font-black text-gray-400 text-center uppercase tracking-widest leading-tight">Juntas v2.2 - Nube Activada</p>
+            </div>
           </div>
         )}
       </main>
@@ -375,13 +373,24 @@ const App: React.FC = () => {
         <div className="fixed inset-0 z-[500] flex items-end sm:items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/90 backdrop-blur-sm" onClick={() => setSelectedExp(null)} />
           <div className="bg-white w-full max-w-xl rounded-t-[4rem] sm:rounded-[4rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom duration-300 border-8 border-black overflow-y-auto max-h-[90vh] no-scrollbar">
-            <button onClick={() => setSelectedExp(null)} className="absolute top-6 right-6 p-2 rounded-full border-4 border-black bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] z-10 hover:bg-orange-50 active:scale-95 transition-all"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" className="w-6 h-6"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg></button>
+            <div className="absolute top-6 right-6 flex gap-2">
+              <button onClick={() => handleDelete(selectedExp.id)} className="p-3 rounded-full border-4 border-red-600 bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] z-10 hover:bg-red-50 active:scale-95 transition-all text-red-600">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" className="w-5 h-5"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+              </button>
+              <button onClick={() => setSelectedExp(null)} className="p-3 rounded-full border-4 border-black bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] z-10 hover:bg-orange-50 active:scale-95 transition-all">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" className="w-5 h-5"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+              </button>
+            </div>
+            
             <div className="flex flex-col items-center text-center">
               <Stamp type={selectedExp.type} size="lg" date={selectedExp.date} />
               <h2 className="text-4xl font-black text-black my-4 font-serif uppercase tracking-tighter leading-tight italic">{selectedExp.title}</h2>
               {selectedExp.photoUrl && <div className="w-full mb-6 rounded-3xl overflow-hidden border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]"><img src={selectedExp.photoUrl} className="w-full h-auto" alt={selectedExp.title} /></div>}
               <div className="w-full bg-white border-4 border-black rounded-3xl p-6 italic font-bold mb-6 shadow-[6px_6px_0px_0px_rgba(251,146,60,1)]"><p className="text-xl">"{selectedExp.note || "Un momento inolvidable juntas."}"</p></div>
-              <div className="flex justify-between w-full text-[10px] font-black uppercase tracking-widest border-t-4 border-black pt-6 opacity-60"><span>{selectedExp.locationName}</span><span>{new Date(selectedExp.date).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })}</span></div>
+              <div className="flex flex-col gap-1 border-t-4 border-black pt-6 w-full">
+                <div className="flex justify-between w-full text-[10px] font-black uppercase tracking-widest opacity-60"><span>{selectedExp.locationName}</span><span>{new Date(selectedExp.date).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })}</span></div>
+                <p className="text-[8px] font-black uppercase text-gray-400 text-right">Sello fijado por {selectedExp.createdBy}</p>
+              </div>
             </div>
           </div>
         </div>
